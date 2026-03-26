@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Dashboard - Salon Bella</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <h1>💇 Dashboard Salon Bella</h1>
+    <p>Gestión local de citas y pedidos</p>
+    <div style="margin-top: 10px;">
+      <a href="/chat.html" style="color: white; text-decoration: underline;">Abrir Simulador de WhatsApp</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h2>📅 Agenda de Hoy / Próximas Citas</h2>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Cliente</th>
+              <th>Teléfono</th>
+              <th>Servicio</th>
+              <th>Fecha</th>
+              <th>Hora</th>
+              <th>Estado</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="agenda-body">
+            <!-- Data populated via JS -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>🛍️ Pedidos Pendientes</h2>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Teléfono Cliente</th>
+              <th>Producto</th>
+              <th>Cantidad</th>
+              <th>Total (₡)</th>
+              <th>Fecha Pedido</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="orders-body">
+            <!-- Data populated via JS -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="dashboard.js"></script>
+</body>
+</html>

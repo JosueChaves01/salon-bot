@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# WhatsApp session data (contains auth tokens)
+.wwebjs_auth/
+.wwebjs_cache/
+
+# Data files (contienen datos de usuarios/citas)
+data/citas.json
+data/usuarios.json
+data/appointments.json
+data/orders.json
+data/clients.json
+data/conversation_state.json
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Build
+dist/
+build/

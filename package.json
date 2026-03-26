@@ -1,0 +1,25 @@
+{
+  "name": "salon-bot",
+  "version": "1.0.0",
+  "description": "Bot de WhatsApp para salon de belleza con Claude AI",
+  "type": "module",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "node src/main.js",
+    "dev": "node --watch src/main.js",
+    "test": "node test-bot.js",
+    "test:auto": "node test-auto.js",
+    "test:clean": "node -e \"import('fs').then(({writeFileSync:w})=>{w('data/appointments.json',JSON.stringify([],null,2));w('data/orders.json',JSON.stringify([],null,2));w('data/conversation_state.json',JSON.stringify({},null,2));console.log('✅ Datos de prueba eliminados');})\""
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "ai": "^6.0.116",
+    "axios": "^1.13.6",
+    "cors": "^2.8.6",
+    "dotenv": "^16.4.5",
+    "express": "^5.2.1",
+    "node-cron": "^3.0.3",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.23.0"
+  }
+}
