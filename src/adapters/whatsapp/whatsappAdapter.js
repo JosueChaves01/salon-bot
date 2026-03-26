@@ -9,11 +9,21 @@ import { logger } from '../../utils/logger.js'
 const RECONNECT_DELAY_MS = 5000
 
 export const initWhatsAppAdapter = () => {
+  const sessionPath = process.env.SESSION_DATA_PATH || './.wwebjs_auth'
+
   const client = new Client({
-    authStrategy: new LocalAuth(),
+    authStrategy: new LocalAuth({ dataPath: sessionPath }),
     puppeteer: {
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process'
+      ]
     }
   })
 
@@ -38,9 +48,9 @@ export const initWhatsAppAdapter = () => {
     // Ignore group messages
     if (msg.from.includes('@g.us')) return
 
-    // Only allow authorized number for testing
-    const numeroAutorizado = '50684581135'
-    if (phone !== numeroAutorizado) return
+    // Only allow authorized number if AUTHORIZED_PHONE is set (testing mode)
+    const numeroAutorizado = process.env.AUTHORIZED_PHONE
+    if (numeroAutorizado && phone !== numeroAutorizado) return
 
     const text = msg.body.trim()
     if (!text) return
