@@ -1,6 +1,6 @@
 FROM node:22-slim
 
-# Instalar Chromium y todas sus dependencias del sistema
+# Instalar Chromium y dependencias
 RUN apt-get update && apt-get install -y \
   chromium \
   libglib2.0-0 \
@@ -18,15 +18,16 @@ RUN apt-get update && apt-get install -y \
   libasound2 \
   fonts-liberation \
   --no-install-recommends \
-  && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/* \
+  && which chromium && chromium --version
 
-# Usar Chromium del sistema, no descargar uno propio
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_SKIP_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 WORKDIR /app
 
-COPY package*.json ./
+COPY package*.json .npmrc* ./
 RUN npm ci --omit=dev
 
 COPY . .
