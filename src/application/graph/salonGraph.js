@@ -31,12 +31,44 @@ const GraphState = Annotation.Root({
   slots:    Annotation({ reducer: (a, b) => b === null ? {} : ({ ...a, ...b }), default: () => ({}) }),
 })
 
-// ── Catálogo formateado ───────────────────────────────────────────────────────
-const serviciosCatalogo = Object.values(SERVICIOS)
-  .map(s => `• *${s.nombre}* (${s.duracion} min) — ₡${s.precio.toLocaleString()}`)
-  .join('\n')
+// ── Catálogos por categoría ────────────────────────────────────────────────────
+const CATEGORIAS = {
+  CORTE: {
+    keys: ['CORTE_DAMA', 'CORTE_CABALLERO'],
+    kw:   ['corte', 'pelo corto', 'cortar'],
+  },
+  CABELLO: {
+    keys: ['TINTE', 'MECHAS', 'TRATAMIENTO', 'PEINADO'],
+    kw:   ['tinte', 'mechas', 'highlights', 'tratamiento', 'peinado', 'cabello', 'color', 'tintura'],
+  },
+  BELLEZA: {
+    keys: ['MANICURE', 'PEDICURE', 'MAQUILLAJE'],
+    kw:   ['manicure', 'pedicure', 'maquillaje', 'uñas', 'unias', 'maquilla'],
+  },
+}
+
+const catalogoPorKeys = (keys) =>
+  keys.map(k => {
+    const s = SERVICIOS[k]
+    return `• *${s.nombre}* (${s.duracion} min) — ₡${s.precio.toLocaleString()}`
+  }).join('\n')
+
+const detectarCategoria = (text) => {
+  const t = text.toLowerCase()
+  for (const [cat, { kw }] of Object.entries(CATEGORIAS)) {
+    if (kw.some(k => t.includes(k))) return cat
+  }
+  return null
+}
 
 const SYSTEM_PROMPT = `Eres la recepcionista amable de "Salon Bella". Responde en español, breve y cálida, con emojis ocasionales.`
+
+const MSG_BIENVENIDA =
+  `¡Hola! 👋 Bienvenido/a a *Salon Bella*.\n\n` +
+  `¿En qué puedo ayudarte hoy?\n` +
+  `- Si deseas *agendar un servicio*, escribe *"agendar"*.\n` +
+  `- Si prefieres ver nuestras *opciones de menú o servicios*, escribe *"menu"*.\n\n` +
+  `¡Estoy aquí para lo que necesites! 😊`
 
 // ── Keywords para clasificación local (sin LLM) ───────────────────────────────
 const BOOK_KW       = ['agendar', 'reservar', 'cita', 'turno', 'apartar', 'quiero hacerme', 'necesito servicio', 'quiero servicio', 'agendar cita', 'hacer cita', 'sacar cita']
@@ -188,9 +220,19 @@ const bookingNode = async (state) => {
 
   // ── Recolección de slots ──────────────────────────────────────────────────
   if (!slots.service) {
+    // ¿El texto ya menciona una categoría o servicio específico?
+    const cat = detectarCategoria(text)
+    if (cat) {
+      const { keys } = CATEGORIAS[cat]
+      return {
+        slots, step: 'BOOKING_ASK_SERVICE',
+        messages: [new AIMessage(`💅 ¡Perfecto! Estos son nuestros servicios de ${cat === 'CORTE' ? 'corte' : cat === 'CABELLO' ? 'cabello' : 'uñas y belleza'}:\n\n${catalogoPorKeys(keys)}\n\n¿Cuál prefieres?`)],
+      }
+    }
+    // Si no se detecta categoría, preguntar primero por tipo
     return {
       slots, step: 'BOOKING_ASK_SERVICE',
-      messages: [new AIMessage(`💅 ¿Qué servicio te gustaría hacerte?\n\n${serviciosCatalogo}`)],
+      messages: [new AIMessage(`💅 ¡Perfecto! ¿Qué servicio te gustaría hacerte hoy?\n_(Tinte, corte, mechas, manicure...)_`)],
     }
   }
 
@@ -332,27 +374,39 @@ const cancelNode = async (state) => {
 
 // ── NODO: info ────────────────────────────────────────────────────────────────
 const infoNode = async (_state) => {
-  const services = db.read('services')
-  const lines = services?.length > 0
-    ? services.map(s => `• *${s.nombre}* — ₡${s.precio?.toLocaleString()} (${s.duracion} min)`).join('\n')
-    : serviciosCatalogo
+  const catalogo =
+    `✂️ *Corte*\n${catalogoPorKeys(CATEGORIAS.CORTE.keys)}\n\n` +
+    `💇 *Cabello*\n${catalogoPorKeys(CATEGORIAS.CABELLO.keys)}\n\n` +
+    `💅 *Uñas y Belleza*\n${catalogoPorKeys(CATEGORIAS.BELLEZA.keys)}`
   return {
-    messages: [new AIMessage(`💅 *Servicios de Salon Bella*\n\n${lines}\n\nPara agendar escribe *"agendar"*. ¿Algo más? 😊`)],
+    messages: [new AIMessage(`*Servicios de Salon Bella* 💇‍♀️\n\n${catalogo}\n\nPara agendar escribe *"agendar"*. ¿Algo más? 😊`)],
     step: 'START', intent: null,
   }
 }
 
 // ── NODO: general ─────────────────────────────────────────────────────────────
+const GREETING_KW = ['hola', 'buenos días', 'buenos dias', 'buenas tardes', 'buenas noches', 'buenas', 'hey', 'hi', 'buen dia', 'buen día']
+
 const generalNode = async (state) => {
+  const text = state.messages.at(-1)?.content ?? ''
+  const t    = text.toLowerCase().trim()
+
+  // Saludo → mensaje de bienvenida fijo
+  if (GREETING_KW.some(k => t.includes(k))) {
+    return { messages: [new AIMessage(MSG_BIENVENIDA)], step: 'START' }
+  }
+
+  // Comando "menu" → bienvenida también
+  if (t === 'menu' || t === 'menú') {
+    return { messages: [new AIMessage(MSG_BIENVENIDA)], step: 'START' }
+  }
+
   try {
     const history  = state.messages.slice(-6)
     const response = await model.invoke([new SystemMessage(SYSTEM_PROMPT), ...history])
     return { messages: [new AIMessage(response.content)], step: 'START' }
   } catch {
-    return {
-      messages: [new AIMessage('Hola 😊 ¿En qué puedo ayudarte? Escribe *agendar*, *cancelar*, o pregunta por nuestros servicios.')],
-      step: 'START',
-    }
+    return { messages: [new AIMessage(MSG_BIENVENIDA)], step: 'START' }
   }
 }
 
