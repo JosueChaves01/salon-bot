@@ -89,7 +89,10 @@ No inventes información ni cambies datos (fechas, horas, servicios) que ya est�
 IMPORTANTE: Si la respuesta técnica pregunta por la hora, tú debes preguntar por la hora. Si la respuesta técnica confirma una fecha, tú debes confirmar esa misma fecha.
 Respuesta breve y con un emoji ocasional.`
 
-    return await queryLLM([{ role: 'system', content: systemPrompt }])
+    return await queryLLM([
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: workflowResponse }
+    ])
   } catch (error) {
     logger.error('LLMService', 'Error rephrasing response', error.message)
     return workflowResponse // Fallback to dry response

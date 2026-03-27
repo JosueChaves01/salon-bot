@@ -30,14 +30,7 @@ export const detectIntent = (text) => {
 
   if (!normalized) return INTENTS.UNKNOWN
 
-  if (normalized === 'cancelar' || PATTERNS.CANCEL_APPOINTMENT.some(p => normalized.includes(p))) {
-    return INTENTS.CANCEL_APPOINTMENT
-  }
-
-  if (PATTERNS.BUY_PRODUCT.some(p => normalized.includes(p))) {
-    return INTENTS.BUY_PRODUCT
-  }
-
+  // BOOK before CANCEL to avoid false positives on "quiero agendar, no cancelar"
   if (PATTERNS.BOOK_APPOINTMENT.some(p => normalized.includes(p))) {
     return INTENTS.BOOK_APPOINTMENT
   }
@@ -46,11 +39,21 @@ export const detectIntent = (text) => {
     return INTENTS.CHECK_AVAILABILITY
   }
 
+  // CANCEL only when the word appears without booking context
+  if (normalized === 'cancelar' || PATTERNS.CANCEL_APPOINTMENT.some(p => normalized.includes(p))) {
+    return INTENTS.CANCEL_APPOINTMENT
+  }
+
+  if (PATTERNS.BUY_PRODUCT.some(p => normalized.includes(p))) {
+    return INTENTS.BUY_PRODUCT
+  }
+
   if (PATTERNS.ASK_SERVICE_INFO.some(p => normalized.includes(p))) {
     return INTENTS.ASK_SERVICE_INFO
   }
 
-  if (PATTERNS.GREETING.some(p => normalized.includes(p)) && normalized.length < 20) {
+  // GREETING: relaxed to 40 chars so "hola, necesito agendar" also triggers
+  if (PATTERNS.GREETING.some(p => normalized.includes(p)) && normalized.length < 40) {
     return INTENTS.GREETING
   }
 

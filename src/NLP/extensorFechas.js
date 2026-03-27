@@ -1,7 +1,6 @@
 // NLP/extensorFechas.js
 // Convierte expresiones de fecha en español a YYYY-MM-DD sin librerías externas
 
-import { DIAS_LABORALES } from '../constants/horarios.js'
 
 const DIAS_SEMANA = Object.freeze({
   domingo: 0, lunes: 1, martes: 2, miercoles: 3, miércoles: 3,
@@ -56,12 +55,11 @@ export const parsearFecha = (texto) => {
   if (enSemanas) return toISO(sumarDias(hoy(), parseInt(enSemanas[1]) * 7))
 
   // ── Días de semana ───────────────────────────────────────────────
-  // Solo matchea cuando hay contexto temporal explícito (el, para el, este, próximo…)
-  // Así "los sábados" / "los domingos" (habitual) no se convierte en fecha específica
+  // Evita expresiones habituales como "los viernes" → no es fecha específica
+  const esHabitual = /\blos\s+(lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|domingo)\b/.test(t)
   const esSiguiente = /\b(próximo|proximo|siguiente)\b/.test(t)
-  const tieneContextoTemporal = /\b(el|para el|este|ese|próximo|proximo|siguiente|para)\b/.test(t)
 
-  if (tieneContextoTemporal) {
+  if (!esHabitual) {
     for (const [nombre] of Object.entries(DIAS_SEMANA)) {
       if (new RegExp(`\\b${nombre}\\b`).test(t)) {
         const fecha = proximoDia(nombre, esSiguiente)
@@ -105,17 +103,9 @@ export const parsearHora = (texto) => {
   // 1. Formato exacto "14:30", "10:00", "1:30"
   const exacta = t.match(/\b(\d{1,2}):(\d{2})\b/)
   if (exacta) {
-    let h = parseInt(exacta[1])
+    const h = parseInt(exacta[1])
     const m = exacta[2]
-    
-    // HEURÍSTICA: Si es 1-6 y no hay indicación de AM/PM en el texto, asumir PM
-    // El salón abre a las 8 AM, así que es mucho más probable que 1-6 sea PM.
-    // Solo evitamos el ajuste si dice explícitamente "am" o "de la mañana".
-    const tieneIndicacionManana = /\bam\b|\bde\s+la\s+mañana\b|\bpor\s+la\s+mañana\b/i.test(t)
-    if (h > 0 && h < 8 && !tieneIndicacionManana) {
-      h += 12
-    }
-    
+    // Si ya viene en formato 24h (h >= 8) no aplicar heurística
     return `${String(h).padStart(2, '0')}:${m}`
   }
 
