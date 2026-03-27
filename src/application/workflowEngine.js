@@ -11,9 +11,9 @@ export const processMessage = async (phone, text) => {
     return msg
   }
 
-  // Reset commands — limpian el estado del grafo
+  // "salir" resetea el estado; "menu" pasa al graph para mostrar bienvenida
   const lower = normalizedText.toLowerCase()
-  if (lower === 'salir' || lower === 'menu') {
+  if (lower === 'salir') {
     await resetGraph(phone)
     return sendReply('✅ Entendido. ¿En qué más te puedo ayudar? Escribe *agendar*, *cancelar* o pregunta lo que necesites.')
   }

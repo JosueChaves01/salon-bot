@@ -77,6 +77,18 @@ export const parsearFecha = (texto) => {
     if (!isNaN(d.getTime())) return toISO(d)
   }
 
+  // ── "01 abril", "1 abril" — día primero, mes después, sin "de" ──
+  const diaAntes = t.match(/\b(\d{1,2})\s+([a-záéíóú]{3,})\b/)
+  if (diaAntes) {
+    const mes = MESES[diaAntes[2]]
+    const dia = parseInt(diaAntes[1])
+    if (mes && dia >= 1 && dia <= 31) {
+      const anio = new Date().getFullYear()
+      const d = new Date(anio, mes - 1, dia, 12)
+      if (!isNaN(d.getTime())) return toISO(d)
+    }
+  }
+
   // ── "Marzo 30", "abril 5" — mes primero, día después ────────────
   const mesAntes = t.match(/\b([a-záéíóú]{3,})\s+(\d{1,2})\b/)
   if (mesAntes) {

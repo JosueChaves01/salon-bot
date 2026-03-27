@@ -191,6 +191,18 @@ const bookingNode = async (state) => {
     return { messages: [new AIMessage('Por favor responde *sí* o *no* para confirmar la cita.')], step: 'BOOKING_CONFIRM' }
   }
 
+  // ── Si esperamos servicio y el texto es una categoría, mostrar submenú ──────
+  if (step === 'BOOKING_ASK_SERVICE' && !slots.service) {
+    const cat = detectarCategoria(text)
+    if (cat) {
+      const label = cat === 'CORTE' ? 'corte' : cat === 'CABELLO' ? 'cabello' : 'uñas y belleza'
+      return {
+        slots, step: 'BOOKING_ASK_SERVICE',
+        messages: [new AIMessage(`💅 ¡Perfecto! Estos son nuestros servicios de ${label}:\n\n${catalogoPorKeys(CATEGORIAS[cat].keys)}\n\n¿Cuál prefieres?`)],
+      }
+    }
+  }
+
   // ── Extraer slots del texto actual ────────────────────────────────────────
   const extracted = extraerSlots(text)
   if (extracted.servicio && !slots.service) slots.service = extracted.servicio
