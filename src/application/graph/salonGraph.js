@@ -91,14 +91,25 @@ const mostrarDisponibilidadRango = (inicio, fin, serviceKey) => {
 
 // ── NODO: classify ────────────────────────────────────────────────────────────
 const classifyNode = async (state) => {
-  // No reclasificar si ya estamos en un flujo activo
-  if (state.step?.startsWith('BOOKING_') || state.step?.startsWith('CANCEL_')) return {}
+  const currentStep = state.step ?? 'null'
+  const msgCount = state.messages?.length ?? 0
 
-  const text = state.messages.at(-1)?.content ?? ''
+  // No reclasificar si ya estamos en un flujo activo
+  if (state.step?.startsWith('BOOKING_') || state.step?.startsWith('CANCEL_')) {
+    logger.info('Graph:classify', `skip — step=${currentStep}`)
+    return {}
+  }
+
+  const lastMsg = state.messages?.at(-1)
+  const text = lastMsg?.content ?? ''
+  logger.info('Graph:classify', `step=${currentStep} msgs=${msgCount} text="${text}"`)
 
   // 1. Clasificación local por palabras clave (rápida y confiable)
   const local = classifyLocal(text)
-  if (local) return { intent: local, step: 'CLASSIFIED' }
+  if (local) {
+    logger.info('Graph:classify', `local → ${local}`)
+    return { intent: local, step: 'CLASSIFIED' }
+  }
 
   // 2. LLM como fallback para frases ambiguas
   try {
@@ -110,8 +121,11 @@ const classifyNode = async (state) => {
       )
     ])
     const intent = res.content.trim().toUpperCase().replace(/[^A-Z]/g, '')
-    return { intent: ['BOOK', 'CANCEL', 'INFO', 'GENERAL'].includes(intent) ? intent : 'GENERAL', step: 'CLASSIFIED' }
-  } catch {
+    const resolved = ['BOOK', 'CANCEL', 'INFO', 'GENERAL'].includes(intent) ? intent : 'GENERAL'
+    logger.info('Graph:classify', `llm → ${resolved}`)
+    return { intent: resolved, step: 'CLASSIFIED' }
+  } catch (e) {
+    logger.warn('Graph:classify', `llm error → GENERAL: ${e.message}`)
     return { intent: 'GENERAL', step: 'CLASSIFIED' }
   }
 }
@@ -320,14 +334,19 @@ const generalNode = async (state) => {
 
 // ── Routing ───────────────────────────────────────────────────────────────────
 const routeAfterClassify = (state) => {
-  if (state.step?.startsWith('BOOKING_')) return 'booking'
-  if (state.step?.startsWith('CANCEL_'))  return 'cancel'
-  switch (state.intent) {
-    case 'BOOK':   return 'booking'
-    case 'CANCEL': return 'cancel'
-    case 'INFO':   return 'info'
-    default:       return 'general'
+  let dest
+  if (state.step?.startsWith('BOOKING_')) dest = 'booking'
+  else if (state.step?.startsWith('CANCEL_'))  dest = 'cancel'
+  else {
+    switch (state.intent) {
+      case 'BOOK':   dest = 'booking'; break
+      case 'CANCEL': dest = 'cancel';  break
+      case 'INFO':   dest = 'info';    break
+      default:       dest = 'general'
+    }
   }
+  logger.info('Graph:route', `step=${state.step} intent=${state.intent} → ${dest}`)
+  return dest
 }
 
 // ── Compilar grafo ────────────────────────────────────────────────────────────
@@ -349,10 +368,20 @@ const graph = new StateGraph(GraphState)
 
 // ── API pública ───────────────────────────────────────────────────────────────
 export const processWithGraph = async (phone, text) => {
+  logger.info('Graph:invoke', `phone=${phone} text="${text}"`)
   const config = { configurable: { thread_id: phone } }
-  const result = await graph.invoke({ messages: [new HumanMessage(text)], phone }, config)
-  const lastAI = [...result.messages].reverse().find(m => m instanceof AIMessage || m.getType?.() === 'ai')
-  return lastAI?.content ?? "Lo siento, ocurrió un error. Escribe 'hola' para empezar."
+  try {
+    const result = await graph.invoke({ messages: [new HumanMessage(text)], phone }, config)
+    const msgs = result.messages ?? []
+    logger.info('Graph:invoke', `result messages=${msgs.length}`)
+    const lastAI = [...msgs].reverse().find(m => m instanceof AIMessage || m.getType?.() === 'ai')
+    const reply = lastAI?.content ?? "Lo siento, ocurrió un error. Escribe 'hola' para empezar."
+    logger.info('Graph:invoke', `reply="${reply.slice(0, 60)}"`)
+    return reply
+  } catch (error) {
+    logger.error('Graph:invoke', `FATAL: ${error.message}`, error.stack?.slice(0, 300))
+    return "Ocurrió un error en el sistema. Escribe 'menu' para reiniciar."
+  }
 }
 
 export const resetGraph = async (phone) => {
