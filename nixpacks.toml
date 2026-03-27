@@ -4,14 +4,30 @@ nixPkgs = [
   "nss",
   "freetype",
   "harfbuzz",
-  "ca-certificates",
   "glib",
   "fontconfig",
-  "dbus"
+  "dbus",
+  "libdrm",
+  "mesa",
+  "xorg.libX11",
+  "xorg.libXcomposite",
+  "xorg.libXdamage",
+  "xorg.libXext",
+  "xorg.libXfixes",
+  "xorg.libXrandr",
+  "expat",
+  "alsaLib",
+  "cups",
+  "at-spi2-atk",
+  "atk"
 ]
+
+[phases.install]
+cmds = ["npm ci --omit=dev"]
 
 [variables]
 PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = "true"
+PUPPETEER_SKIP_DOWNLOAD = "true"
 PUPPETEER_EXECUTABLE_PATH = "/run/current-system/sw/bin/chromium"
 
 [start]
