@@ -5,6 +5,7 @@
   "type": "module",
   "main": "src/main.js",
   "scripts": {
+    "prestart": "find /data/wwebjs_auth -name 'SingletonLock' -o -name 'SingletonSocket' -o -name 'SingletonCookie' 2>/dev/null | xargs rm -f; exit 0",
     "start": "node src/main.js",
     "dev": "node --watch src/main.js",
     "test": "node test-bot.js",
