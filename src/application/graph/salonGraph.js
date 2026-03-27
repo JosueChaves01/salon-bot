@@ -220,16 +220,14 @@ const bookingNode = async (state) => {
 
   // ── Recolección de slots ──────────────────────────────────────────────────
   if (!slots.service) {
-    // ¿El texto ya menciona una categoría o servicio específico?
     const cat = detectarCategoria(text)
     if (cat) {
-      const { keys } = CATEGORIAS[cat]
+      const label = cat === 'CORTE' ? 'corte' : cat === 'CABELLO' ? 'cabello' : 'uñas y belleza'
       return {
         slots, step: 'BOOKING_ASK_SERVICE',
-        messages: [new AIMessage(`💅 ¡Perfecto! Estos son nuestros servicios de ${cat === 'CORTE' ? 'corte' : cat === 'CABELLO' ? 'cabello' : 'uñas y belleza'}:\n\n${catalogoPorKeys(keys)}\n\n¿Cuál prefieres?`)],
+        messages: [new AIMessage(`💅 ¡Perfecto! Estos son nuestros servicios de ${label}:\n\n${catalogoPorKeys(CATEGORIAS[cat].keys)}\n\n¿Cuál prefieres?`)],
       }
     }
-    // Si no se detecta categoría, preguntar primero por tipo
     return {
       slots, step: 'BOOKING_ASK_SERVICE',
       messages: [new AIMessage(`💅 ¡Perfecto! ¿Qué servicio te gustaría hacerte hoy?\n_(Tinte, corte, mechas, manicure...)_`)],
@@ -391,13 +389,7 @@ const generalNode = async (state) => {
   const text = state.messages.at(-1)?.content ?? ''
   const t    = text.toLowerCase().trim()
 
-  // Saludo → mensaje de bienvenida fijo
-  if (GREETING_KW.some(k => t.includes(k))) {
-    return { messages: [new AIMessage(MSG_BIENVENIDA)], step: 'START' }
-  }
-
-  // Comando "menu" → bienvenida también
-  if (t === 'menu' || t === 'menú') {
+  if (GREETING_KW.some(k => t.includes(k)) || t === 'menu' || t === 'menú') {
     return { messages: [new AIMessage(MSG_BIENVENIDA)], step: 'START' }
   }
 
