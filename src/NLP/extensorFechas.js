@@ -77,6 +77,18 @@ export const parsearFecha = (texto) => {
     if (!isNaN(d.getTime())) return toISO(d)
   }
 
+  // ── "Marzo 30", "abril 5" — mes primero, día después ────────────
+  const mesAntes = t.match(/\b([a-záéíóú]{3,})\s+(\d{1,2})\b/)
+  if (mesAntes) {
+    const mes = MESES[mesAntes[1]]
+    const dia = parseInt(mesAntes[2])
+    if (mes && dia >= 1 && dia <= 31) {
+      const anio = new Date().getFullYear()
+      const d = new Date(anio, mes - 1, dia, 12)
+      if (!isNaN(d.getTime())) return toISO(d)
+    }
+  }
+
   // ── Formato ISO directo ──────────────────────────────────────────
   const iso = t.match(/\b(\d{4}-\d{2}-\d{2})\b/)
   if (iso) return iso[1]
@@ -174,5 +186,16 @@ export const parsearHora = (texto) => {
     return `${String(h).padStart(2, '0')}:00`
   }
 
+  return null
+}
+
+// Detecta si el texto menciona un mes sin fecha específica.
+// Retorna el número de mes (1-12) o null.
+// Ej: "qué fechas de abril tienes" → 4
+export const parsearMes = (texto) => {
+  const t = texto.toLowerCase().trim()
+  for (const [nombre, num] of Object.entries(MESES)) {
+    if (new RegExp(`\\b${nombre}\\b`).test(t)) return num
+  }
   return null
 }

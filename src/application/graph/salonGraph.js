@@ -8,7 +8,7 @@ import {
   generarSlots, filtrarSlotsLibres, validarFecha, validarHora,
   buildAppointmentRecord, getServicio,
 } from '../../domain/services/AppointmentService.js'
-import { parsearFecha, parsearHora, parsearRangoFechas } from '../../NLP/extensorFechas.js'
+import { parsearFecha, parsearHora, parsearRangoFechas, parsearMes } from '../../NLP/extensorFechas.js'
 import { extraerSlots } from '../../agente/slotExtractor.js'
 import { SERVICIOS } from '../../constants/servicios.js'
 import { logger } from '../../utils/logger.js'
@@ -202,6 +202,33 @@ const bookingNode = async (state) => {
   if (step === 'BOOKING_ASK_NAME' && !slots.name) {
     const t = text.trim()
     if (t.length > 1 && !['sí','si','no'].includes(t.toLowerCase())) slots.name = t
+  }
+
+  // ── Consulta de disponibilidad de un mes completo ("qué fechas de abril") ──
+  const mesMencionado = parsearMes(text)
+  if (mesMencionado && !parsearFecha(text) && (step === 'BOOKING_ASK_DATE' || step === 'BOOKING_ASK_SERVICE' || step === 'CLASSIFIED')) {
+    const anio    = new Date().getFullYear()
+    const servicio = slots.service ? getServicio(slots.service) : null
+    const duracion = servicio?.duracion ?? 60
+    const DIAS_ES  = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb']
+    const MESES_NOMBRES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre']
+    const diasMes = new Date(anio, mesMencionado, 0).getDate()
+    const proximasLibres = []
+    for (let dia = 1; dia <= diasMes && proximasLibres.length < 5; dia++) {
+      const iso = `${anio}-${String(mesMencionado).padStart(2,'0')}-${String(dia).padStart(2,'0')}`
+      if (!esDiaLaboral(iso)) continue
+      const appts = db.read('appointments').filter(a => a.fecha === iso && a.estado !== 'cancelled')
+      const bloq  = calcularSlotsOcupados(appts, duracion)
+      const sl    = filtrarSlotsLibres(generarSlots(iso), bloq, duracion)
+      if (sl.length > 0) {
+        const d = new Date(iso + 'T12:00:00')
+        proximasLibres.push(`• *${DIAS_ES[d.getDay()]} ${dia}* — ${sl.slice(0,4).join(' | ')}`)
+      }
+    }
+    const respuesta = proximasLibres.length > 0
+      ? `📅 *Disponibilidad en ${MESES_NOMBRES[mesMencionado - 1]}:*\n\n${proximasLibres.join('\n')}\n\n¿Cuál fecha te queda bien?`
+      : `😔 No hay disponibilidad en ${MESES_NOMBRES[mesMencionado - 1]}. ¿Deseas ver otro mes?`
+    return { slots, step: 'BOOKING_ASK_DATE', messages: [new AIMessage(respuesta)] }
   }
 
   // ── Verificar si el usuario pregunta por disponibilidad en un rango ────────
