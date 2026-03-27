@@ -96,6 +96,39 @@ export const parsearFecha = (texto) => {
   return null
 }
 
+// Parsea un rango de fechas del tipo "del 1 al 15 de abril", "1/04 al 15/04"
+// Retorna { inicio: 'YYYY-MM-DD', fin: 'YYYY-MM-DD' } o null
+export const parsearRangoFechas = (texto) => {
+  const t = texto.toLowerCase().trim()
+  const anioActual = new Date().getFullYear()
+
+  // "del 1 al 15 de abril" / "del 1 al 15 de abril de 2026"
+  const p1 = t.match(/\bdel?\s+(\d{1,2})\s+al?\s+(\d{1,2})\s+de\s+([a-záéíóú]+)(?:\s+de\s+(\d{4}))?/)
+  if (p1) {
+    const mes = MESES[p1[3]]
+    const anio = p1[4] ? parseInt(p1[4]) : anioActual
+    if (mes) {
+      const inicio = new Date(anio, mes - 1, parseInt(p1[1]), 12)
+      const fin    = new Date(anio, mes - 1, parseInt(p1[2]), 12)
+      if (!isNaN(inicio) && !isNaN(fin) && inicio <= fin)
+        return { inicio: toISO(inicio), fin: toISO(fin) }
+    }
+  }
+
+  // "del 1/04 al 15/04" / "1/4 al 15/4"
+  const p2 = t.match(/\bdel?\s+(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?\s+al?\s+(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?/)
+  if (p2) {
+    const anio1 = p2[3] ? parseInt(p2[3]) : anioActual
+    const anio2 = p2[6] ? parseInt(p2[6]) : anioActual
+    const inicio = new Date(anio1, parseInt(p2[2]) - 1, parseInt(p2[1]), 12)
+    const fin    = new Date(anio2, parseInt(p2[5]) - 1, parseInt(p2[4]), 12)
+    if (!isNaN(inicio) && !isNaN(fin) && inicio <= fin)
+      return { inicio: toISO(inicio), fin: toISO(fin) }
+  }
+
+  return null
+}
+
 // Extrae hora en formato HH:MM del texto — retorna null si no encuentra
 export const parsearHora = (texto) => {
   const t = texto.toLowerCase()

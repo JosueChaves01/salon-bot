@@ -1,5 +1,4 @@
 // application/graph/salonGraph.js
-// LangGraph-based conversation engine — reemplaza workflowEngine switch/case
 import { Annotation, StateGraph, START, END, MemorySaver, messagesStateReducer } from '@langchain/langgraph'
 import { HumanMessage, AIMessage, SystemMessage } from '@langchain/core/messages'
 import { ChatOpenAI } from '@langchain/openai'
@@ -9,12 +8,12 @@ import {
   generarSlots, filtrarSlotsLibres, validarFecha, validarHora,
   buildAppointmentRecord, getServicio,
 } from '../../domain/services/AppointmentService.js'
-import { parsearFecha, parsearHora } from '../../NLP/extensorFechas.js'
+import { parsearFecha, parsearHora, parsearRangoFechas } from '../../NLP/extensorFechas.js'
 import { extraerSlots } from '../../agente/slotExtractor.js'
 import { SERVICIOS } from '../../constants/servicios.js'
 import { logger } from '../../utils/logger.js'
 
-// ── Model (OpenRouter, compatible con API de OpenAI) ─────────────────────────
+// ── Model ─────────────────────────────────────────────────────────────────────
 const model = new ChatOpenAI({
   modelName: process.env.OPENROUTER_MODEL || 'stepfun/step-3.5-flash:free',
   openAIApiKey: process.env.OPENROUTER_API_KEY,
@@ -23,7 +22,7 @@ const model = new ChatOpenAI({
   maxRetries: 2,
 })
 
-// ── State ────────────────────────────────────────────────────────────────────
+// ── State ─────────────────────────────────────────────────────────────────────
 const GraphState = Annotation.Root({
   messages: Annotation({ reducer: messagesStateReducer, default: () => [] }),
   phone:    Annotation({ reducer: (a, b) => b ?? a, default: () => null }),
@@ -32,39 +31,86 @@ const GraphState = Annotation.Root({
   slots:    Annotation({ reducer: (a, b) => b === null ? {} : ({ ...a, ...b }), default: () => ({}) }),
 })
 
-const SYSTEM_PROMPT = `Eres la recepcionista amable y profesional de "Salon Bella".
-Responde siempre en español, de forma breve y cálida, con emojis ocasionales.
-Solo puedes ayudar con: agendar citas, cancelar citas, precios/servicios, y conversar brevemente.
-Nunca inventes fechas, horarios ni precios.`
-
+// ── Catálogo formateado ───────────────────────────────────────────────────────
 const serviciosCatalogo = Object.values(SERVICIOS)
-  .map(s => `• ${s.nombre} (${s.duracion} min) — ₡${s.precio.toLocaleString()}`)
+  .map(s => `• *${s.nombre}* (${s.duracion} min) — ₡${s.precio.toLocaleString()}`)
   .join('\n')
+
+const SYSTEM_PROMPT = `Eres la recepcionista amable de "Salon Bella". Responde en español, breve y cálida, con emojis ocasionales.`
+
+// ── Keywords para clasificación local (sin LLM) ───────────────────────────────
+const BOOK_KW       = ['agendar', 'reservar', 'cita', 'turno', 'apartar', 'quiero hacerme', 'necesito servicio', 'quiero servicio', 'agendar cita', 'hacer cita', 'sacar cita']
+const CANCEL_KW     = ['cancelar', 'anular', 'cancela', 'quiero cancelar']
+const INFO_KW       = ['precio', 'cuesta', 'costo', 'cuánto', 'cuanto', 'que servicios', 'qué servicios', 'servicios tienen', 'qué hacen', 'que hacen', 'qué ofrecen']
+const AVAIL_KW      = ['disponibilidad', 'disponible', 'hay espacio', 'hay lugar', 'tienen espacio', 'horarios disponibles', 'qué días', 'que dias']
+
+const classifyLocal = (text) => {
+  const t = text.toLowerCase()
+  if (BOOK_KW.some(k => t.includes(k)))   return 'BOOK'
+  if (CANCEL_KW.some(k => t.includes(k))) return 'CANCEL'
+  if (INFO_KW.some(k => t.includes(k)))   return 'INFO'
+  if (AVAIL_KW.some(k => t.includes(k)))  return 'BOOK' // disponibilidad también inicia flujo booking
+  return null
+}
+
+// ── Helper: disponibilidad de un rango de fechas ──────────────────────────────
+const mostrarDisponibilidadRango = (inicio, fin, serviceKey) => {
+  const lines = []
+  const current = new Date(inicio + 'T12:00:00')
+  const end     = new Date(fin + 'T12:00:00')
+  const DIAS_ES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
+  const MESES_ES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+
+  while (current <= end) {
+    const iso  = current.toISOString().slice(0, 10)
+    const dia  = DIAS_ES[current.getDay()]
+    const label = `${dia} ${current.getDate()} ${MESES_ES[current.getMonth()]}`
+
+    if (!esDiaLaboral(iso)) {
+      current.setDate(current.getDate() + 1)
+      continue // omitir domingos silenciosamente
+    }
+
+    const appointments = db.read('appointments').filter(a => a.fecha === iso && a.estado !== 'cancelled')
+    const servicio     = serviceKey ? getServicio(serviceKey) : null
+    const duracion     = servicio?.duracion ?? 60
+    const bloqueados   = calcularSlotsOcupados(appointments, duracion)
+    const libres       = filtrarSlotsLibres(generarSlots(iso), bloqueados, duracion)
+
+    if (libres.length === 0) {
+      lines.push(`❌ *${label}*: sin disponibilidad`)
+    } else {
+      lines.push(`✅ *${label}*: ${libres.join(' | ')}`)
+    }
+
+    current.setDate(current.getDate() + 1)
+  }
+
+  return lines.length > 0 ? lines.join('\n') : 'No hay días laborales en ese rango.'
+}
 
 // ── NODO: classify ────────────────────────────────────────────────────────────
 const classifyNode = async (state) => {
-  // Si ya estamos en un flujo activo, no reclasificar
-  if (state.step?.startsWith('BOOKING_') || state.step?.startsWith('CANCEL_')) {
-    return {}
-  }
+  // No reclasificar si ya estamos en un flujo activo
+  if (state.step?.startsWith('BOOKING_') || state.step?.startsWith('CANCEL_')) return {}
 
-  const lastMsg = state.messages.at(-1)
-  const text = lastMsg?.content ?? ''
+  const text = state.messages.at(-1)?.content ?? ''
 
+  // 1. Clasificación local por palabras clave (rápida y confiable)
+  const local = classifyLocal(text)
+  if (local) return { intent: local, step: 'CLASSIFIED' }
+
+  // 2. LLM como fallback para frases ambiguas
   try {
-    const response = await model.invoke([
+    const res = await model.invoke([
       new SystemMessage(
-        `Clasifica este mensaje en una sola palabra: BOOK, CANCEL, INFO, o GENERAL.\n` +
-        `BOOK = quiere agendar/reservar cita.\n` +
-        `CANCEL = quiere cancelar cita existente.\n` +
-        `INFO = pregunta por precios o servicios.\n` +
-        `GENERAL = saludo u otro.\n` +
-        `Mensaje: "${text}"\nResponde SOLO la palabra.`
+        `Clasifica este mensaje en UNA sola palabra: BOOK, CANCEL, INFO, o GENERAL.\n` +
+        `BOOK=agendar cita. CANCEL=cancelar cita. INFO=precios/servicios. GENERAL=otro.\n` +
+        `Mensaje: "${text}"\nResponde SOLO la palabra, sin puntuación.`
       )
     ])
-    const intent = response.content.trim().toUpperCase().replace(/[^A-Z]/g, '')
-    const valid = ['BOOK', 'CANCEL', 'INFO', 'GENERAL']
-    return { intent: valid.includes(intent) ? intent : 'GENERAL', step: 'CLASSIFIED' }
+    const intent = res.content.trim().toUpperCase().replace(/[^A-Z]/g, '')
+    return { intent: ['BOOK', 'CANCEL', 'INFO', 'GENERAL'].includes(intent) ? intent : 'GENERAL', step: 'CLASSIFIED' }
   } catch {
     return { intent: 'GENERAL', step: 'CLASSIFIED' }
   }
@@ -72,18 +118,16 @@ const classifyNode = async (state) => {
 
 // ── NODO: booking ─────────────────────────────────────────────────────────────
 const bookingNode = async (state) => {
-  const lastMsg = state.messages.at(-1)
-  const text = lastMsg?.content ?? ''
+  const text  = state.messages.at(-1)?.content ?? ''
   const slots = { ...state.slots }
-  const step = state.step
+  const step  = state.step
 
-  // Paso de confirmación: esperar sí/no
+  // ── Confirmación de cita ──────────────────────────────────────────────────
   if (step === 'BOOKING_CONFIRM') {
     const norm = text.toLowerCase().trim()
     if (norm === 'si' || norm === 'sí') {
       const record = buildAppointmentRecord(state.phone, {
-        service: slots.service, date: slots.date,
-        time: slots.time, name: slots.name,
+        service: slots.service, date: slots.date, time: slots.time, name: slots.name,
       })
       db.insert('appointments', record)
       const srvObj = getServicio(slots.service)
@@ -98,45 +142,52 @@ const bookingNode = async (state) => {
         step: 'START', intent: null, slots: null,
       }
     }
-    return {
-      messages: [new AIMessage('Por favor responde *sí* o *no* para confirmar la cita.')],
-      step: 'BOOKING_CONFIRM',
-    }
+    return { messages: [new AIMessage('Por favor responde *sí* o *no* para confirmar la cita.')], step: 'BOOKING_CONFIRM' }
   }
 
-  // Intentar extraer slots del mensaje actual
+  // ── Extraer slots del texto actual ────────────────────────────────────────
   const extracted = extraerSlots(text)
   if (extracted.servicio && !slots.service) slots.service = extracted.servicio
-  if (extracted.fecha && !slots.date)       slots.date    = extracted.fecha
-  if (extracted.hora && !slots.time)        slots.time    = extracted.hora
-  if (extracted.nombre && !slots.name)      slots.name    = extracted.nombre
+  if (extracted.fecha   && !slots.date)    slots.date    = extracted.fecha
+  if (extracted.hora    && !slots.time)    slots.time    = extracted.hora
+  if (extracted.nombre  && !slots.name)    slots.name    = extracted.nombre
 
-  // Captura de nombre cuando se está pidiendo explícitamente
+  // Captura de nombre cuando se espera respuesta libre
   if (step === 'BOOKING_ASK_NAME' && !slots.name) {
     const t = text.trim()
-    const lower = t.toLowerCase()
-    if (t.length > 1 && lower !== 'sí' && lower !== 'si' && lower !== 'no') {
-      slots.name = t
+    if (t.length > 1 && !['sí','si','no'].includes(t.toLowerCase())) slots.name = t
+  }
+
+  // ── Verificar si el usuario pregunta por disponibilidad en un rango ────────
+  const rango = parsearRangoFechas(text)
+  if (rango && (step === 'BOOKING_ASK_DATE' || step === 'BOOKING_ASK_SERVICE' || step === 'CLASSIFIED' || step === 'START')) {
+    const resumen = mostrarDisponibilidadRango(rango.inicio, rango.fin, slots.service ?? null)
+    const extra   = slots.service
+      ? `\nPara agendar, dime qué día te queda mejor. 😊`
+      : `\nCuando elijas un día, también dime el servicio que deseas. 😊`
+    return {
+      slots,
+      step: slots.service ? 'BOOKING_ASK_DATE' : 'BOOKING_ASK_SERVICE',
+      messages: [new AIMessage(`📅 *Disponibilidad ${rango.inicio} → ${rango.fin}:*\n\n${resumen}${extra}`)],
     }
   }
 
-  // ── Recolección de slots ───────────────────────────────────────────────────
+  // ── Recolección de slots ──────────────────────────────────────────────────
   if (!slots.service) {
     return {
-      slots,
-      step: 'BOOKING_ASK_SERVICE',
+      slots, step: 'BOOKING_ASK_SERVICE',
       messages: [new AIMessage(`💅 ¿Qué servicio te gustaría hacerte?\n\n${serviciosCatalogo}`)],
     }
   }
 
   if (!slots.date) {
     return {
-      slots,
-      step: 'BOOKING_ASK_DATE',
-      messages: [new AIMessage('📅 ¿Para qué fecha lo agendamos? (ej: mañana, el viernes, 15 de marzo)')],
+      slots, step: 'BOOKING_ASK_DATE',
+      messages: [new AIMessage('📅 ¿Para qué fecha lo agendamos? (ej: mañana, el viernes, 15 de abril)')],
     }
   }
 
+  // Validar fecha
   const vDate = validarFecha(slots.date)
   if (!vDate.valido) {
     const { date: _, ...rest } = slots
@@ -147,25 +198,26 @@ const bookingNode = async (state) => {
     return { slots: rest, step: 'BOOKING_ASK_DATE', messages: [new AIMessage('❌ Solo atendemos de lunes a sábado. ¿Deseas otra fecha?')] }
   }
 
+  // ── Mostrar horarios disponibles para el día elegido ──────────────────────
   if (!slots.time) {
     const appointments = db.read('appointments').filter(a => a.fecha === slots.date && a.estado !== 'cancelled')
-    const servicio = getServicio(slots.service)
-    if (servicio) {
-      const bloqueados = calcularSlotsOcupados(appointments, servicio.duracion)
-      const libres = filtrarSlotsLibres(generarSlots(slots.date), bloqueados, servicio.duracion)
-      if (libres.length === 0) {
-        const { date: _, ...rest } = slots
-        return { slots: rest, step: 'BOOKING_ASK_DATE', messages: [new AIMessage('❌ No hay espacios disponibles para ese día. ¿Deseas otra fecha?')] }
-      }
-      return {
-        slots,
-        step: 'BOOKING_ASK_TIME',
-        messages: [new AIMessage(`🕐 Para el ${slots.date} tenemos disponibles:\n\n${formatearMenuDisponibilidad(libres)}\n\n¿A qué hora te queda mejor?`)],
-      }
+    const servicio     = getServicio(slots.service)
+    const duracion     = servicio?.duracion ?? 60
+    const bloqueados   = calcularSlotsOcupados(appointments, duracion)
+    const libres       = filtrarSlotsLibres(generarSlots(slots.date), bloqueados, duracion)
+
+    if (libres.length === 0) {
+      const { date: _, ...rest } = slots
+      return { slots: rest, step: 'BOOKING_ASK_DATE', messages: [new AIMessage(`❌ No hay espacios disponibles para el *${slots.date}*. ¿Deseas otra fecha?`)] }
     }
-    return { slots, step: 'BOOKING_ASK_TIME', messages: [new AIMessage('🕐 ¿A qué hora te queda mejor? (ej: 2pm, 10:00)')] }
+
+    return {
+      slots, step: 'BOOKING_ASK_TIME',
+      messages: [new AIMessage(`🕐 Para el *${slots.date}* tenemos disponibles:\n\n${formatearMenuDisponibilidad(libres)}\n\n¿A qué hora te queda mejor?`)],
+    }
   }
 
+  // Validar hora
   const vTime = validarHora(slots.time)
   if (!vTime.valido) {
     const { time: _, ...rest } = slots
@@ -176,13 +228,12 @@ const bookingNode = async (state) => {
   const servicio = getServicio(slots.service)
   if (servicio) {
     const appointments = db.read('appointments').filter(a => a.fecha === slots.date && a.estado !== 'cancelled')
-    const bloqueados = calcularSlotsOcupados(appointments, servicio.duracion)
-    const libres = filtrarSlotsLibres(generarSlots(slots.date), bloqueados, servicio.duracion)
+    const bloqueados   = calcularSlotsOcupados(appointments, servicio.duracion)
+    const libres       = filtrarSlotsLibres(generarSlots(slots.date), bloqueados, servicio.duracion)
     if (!libres.includes(slots.time)) {
       const { time: _, ...rest } = slots
       return {
-        slots: rest,
-        step: 'BOOKING_ASK_TIME',
+        slots: rest, step: 'BOOKING_ASK_TIME',
         messages: [new AIMessage(`⏰ Ese horario ya está ocupado.\n\nLibres: ${formatearMenuDisponibilidad(libres)}\n\n¿Cuál prefieres?`)],
       }
     }
@@ -192,13 +243,12 @@ const bookingNode = async (state) => {
     return { slots, step: 'BOOKING_ASK_NAME', messages: [new AIMessage('👤 ¿A nombre de quién lo anoto?')] }
   }
 
-  // Todos los slots listos → mostrar resumen para confirmar
+  // ── Mostrar resumen para confirmar ────────────────────────────────────────
   const srvObj = getServicio(slots.service)
-  const d = new Date(slots.date + 'T12:00:00')
+  const d      = new Date(slots.date + 'T12:00:00')
   const diaStr = d.toLocaleDateString('es-CR', { weekday: 'long', day: 'numeric', month: 'long' })
   return {
-    slots,
-    step: 'BOOKING_CONFIRM',
+    slots, step: 'BOOKING_CONFIRM',
     messages: [new AIMessage(
       `¡Casi listo, ${slots.name}! Así quedaría tu cita:\n\n` +
       `📅 *${diaStr}* a las *${slots.time}*\n` +
@@ -210,35 +260,25 @@ const bookingNode = async (state) => {
 
 // ── NODO: cancel ──────────────────────────────────────────────────────────────
 const cancelNode = async (state) => {
-  const lastMsg = state.messages.at(-1)
-  const text = lastMsg?.content ?? ''
+  const text  = state.messages.at(-1)?.content ?? ''
   const slots = { ...state.slots }
-  const step = state.step
+  const step  = state.step
 
   if (step === 'CANCEL_CONFIRM') {
     const norm = text.toLowerCase().trim()
     if (norm === 'si' || norm === 'sí') {
       db.update('appointments', slots.appointmentToCancel.id, { estado: 'cancelled' })
-      return {
-        messages: [new AIMessage('✅ Tu cita ha sido cancelada exitosamente. ¡Hasta la próxima! 👋')],
-        step: 'START', intent: null, slots: null,
-      }
+      return { messages: [new AIMessage('✅ Tu cita ha sido cancelada exitosamente. ¡Hasta la próxima! 👋')], step: 'START', intent: null, slots: null }
     }
     if (norm === 'no') {
-      return {
-        messages: [new AIMessage('❌ Entendido, tu cita NO fue cancelada. ¡Nos vemos pronto! 😊')],
-        step: 'START', intent: null, slots: null,
-      }
+      return { messages: [new AIMessage('❌ Entendido, tu cita NO fue cancelada. ¡Nos vemos pronto! 😊')], step: 'START', intent: null, slots: null }
     }
     return { messages: [new AIMessage('Por favor responde *sí* o *no*.')], step: 'CANCEL_CONFIRM' }
   }
 
   const citas = db.read('appointments').filter(a => a.cliente === state.phone && a.estado === 'pending')
   if (citas.length === 0) {
-    return {
-      messages: [new AIMessage('📭 No tienes citas agendadas actualmente para cancelar.')],
-      step: 'START', intent: null,
-    }
+    return { messages: [new AIMessage('📭 No tienes citas agendadas actualmente para cancelar.')], step: 'START', intent: null }
   }
 
   const cita = citas[0]
@@ -253,14 +293,11 @@ const cancelNode = async (state) => {
 }
 
 // ── NODO: info ────────────────────────────────────────────────────────────────
-const infoNode = async (state) => {
+const infoNode = async (_state) => {
   const services = db.read('services')
-  let lines
-  if (services?.length > 0) {
-    lines = services.map(s => `• *${s.nombre}* — ₡${s.precio?.toLocaleString()} (${s.duracion} min)`).join('\n')
-  } else {
-    lines = serviciosCatalogo
-  }
+  const lines = services?.length > 0
+    ? services.map(s => `• *${s.nombre}* — ₡${s.precio?.toLocaleString()} (${s.duracion} min)`).join('\n')
+    : serviciosCatalogo
   return {
     messages: [new AIMessage(`💅 *Servicios de Salon Bella*\n\n${lines}\n\nPara agendar escribe *"agendar"*. ¿Algo más? 😊`)],
     step: 'START', intent: null,
@@ -270,13 +307,12 @@ const infoNode = async (state) => {
 // ── NODO: general ─────────────────────────────────────────────────────────────
 const generalNode = async (state) => {
   try {
-    // Mantener solo las últimas 6 interacciones para no inflar el contexto
-    const history = state.messages.slice(-6)
+    const history  = state.messages.slice(-6)
     const response = await model.invoke([new SystemMessage(SYSTEM_PROMPT), ...history])
     return { messages: [new AIMessage(response.content)], step: 'START' }
   } catch {
     return {
-      messages: [new AIMessage("Hola 😊 ¿En qué puedo ayudarte? Escribe *agendar*, *cancelar*, o pregunta por nuestros servicios.")],
+      messages: [new AIMessage('Hola 😊 ¿En qué puedo ayudarte? Escribe *agendar*, *cancelar*, o pregunta por nuestros servicios.')],
       step: 'START',
     }
   }
@@ -314,24 +350,13 @@ const graph = new StateGraph(GraphState)
 // ── API pública ───────────────────────────────────────────────────────────────
 export const processWithGraph = async (phone, text) => {
   const config = { configurable: { thread_id: phone } }
-
-  const result = await graph.invoke(
-    { messages: [new HumanMessage(text)], phone },
-    config
-  )
-
-  const lastAI = [...result.messages]
-    .reverse()
-    .find(m => m instanceof AIMessage || m.getType?.() === 'ai')
-
+  const result = await graph.invoke({ messages: [new HumanMessage(text)], phone }, config)
+  const lastAI = [...result.messages].reverse().find(m => m instanceof AIMessage || m.getType?.() === 'ai')
   return lastAI?.content ?? "Lo siento, ocurrió un error. Escribe 'hola' para empezar."
 }
 
 export const resetGraph = async (phone) => {
-  const config = { configurable: { thread_id: phone } }
   try {
-    await graph.updateState(config, { step: 'START', intent: null, slots: null }, 'classify')
-  } catch {
-    // Si no hay estado previo, ignorar
-  }
+    await graph.updateState({ configurable: { thread_id: phone } }, { step: 'START', intent: null, slots: null }, 'classify')
+  } catch { /* sin estado previo, ignorar */ }
 }
