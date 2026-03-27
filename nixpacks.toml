@@ -31,4 +31,4 @@ PUPPETEER_SKIP_DOWNLOAD = "true"
 PUPPETEER_EXECUTABLE_PATH = "/run/current-system/sw/bin/chromium"
 
 [start]
-cmd = "npm start"
+cmd = "sh start.sh"
