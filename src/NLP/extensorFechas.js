@@ -54,21 +54,9 @@ export const parsearFecha = (texto) => {
   const enSemanas = t.match(/\ben\s+(\d+)\s+semanas?\b/)
   if (enSemanas) return toISO(sumarDias(hoy(), parseInt(enSemanas[1]) * 7))
 
-  // ── Días de semana ───────────────────────────────────────────────
-  // Evita expresiones habituales como "los viernes" → no es fecha específica
-  const esHabitual = /\blos\s+(lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|domingo)\b/.test(t)
-  const esSiguiente = /\b(próximo|proximo|siguiente)\b/.test(t)
-
-  if (!esHabitual) {
-    for (const [nombre] of Object.entries(DIAS_SEMANA)) {
-      if (new RegExp(`\\b${nombre}\\b`).test(t)) {
-        const fecha = proximoDia(nombre, esSiguiente)
-        if (fecha) return toISO(fecha)
-      }
-    }
-  }
-
   // ── Fechas específicas: "15 de marzo", "15/03", "15/03/2026" ────
+  // Se verifican ANTES que los días de semana para que "viernes 27 de marzo"
+  // resuelva al día concreto y no al próximo viernes genérico.
   const conMes = t.match(/\b(\d{1,2})\s+de\s+([a-záéíóú]+)(?:\s+de\s+(\d{4}))?\b/)
   if (conMes) {
     const dia = parseInt(conMes[1])
@@ -92,6 +80,20 @@ export const parsearFecha = (texto) => {
   // ── Formato ISO directo ──────────────────────────────────────────
   const iso = t.match(/\b(\d{4}-\d{2}-\d{2})\b/)
   if (iso) return iso[1]
+
+  // ── Días de semana ───────────────────────────────────────────────
+  // Solo se evalúan si no se encontró una fecha específica arriba.
+  const esHabitual = /\blos\s+(lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|domingo)\b/.test(t)
+  const esSiguiente = /\b(próximo|proximo|siguiente)\b/.test(t)
+
+  if (!esHabitual) {
+    for (const [nombre] of Object.entries(DIAS_SEMANA)) {
+      if (new RegExp(`\\b${nombre}\\b`).test(t)) {
+        const fecha = proximoDia(nombre, esSiguiente)
+        if (fecha) return toISO(fecha)
+      }
+    }
+  }
 
   return null
 }

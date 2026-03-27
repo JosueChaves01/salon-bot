@@ -221,8 +221,32 @@ const bookingNode = async (state) => {
     const libres       = filtrarSlotsLibres(generarSlots(slots.date), bloqueados, duracion)
 
     if (libres.length === 0) {
+      // Buscar próximas fechas disponibles (hasta 14 días adelante)
+      const proximasLibres = []
+      const base = new Date(slots.date + 'T12:00:00')
+      for (let i = 1; i <= 30 && proximasLibres.length < 3; i++) {
+        const next = new Date(base)
+        next.setDate(base.getDate() + i)
+        const iso = next.toISOString().slice(0, 10)
+        if (!esDiaLaboral(iso)) continue
+        const appts = db.read('appointments').filter(a => a.fecha === iso && a.estado !== 'cancelled')
+        const bloq  = calcularSlotsOcupados(appts, duracion)
+        const sl    = filtrarSlotsLibres(generarSlots(iso), bloq, duracion)
+        if (sl.length > 0) {
+          const d = new Date(iso + 'T12:00:00')
+          const DIAS_ES  = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb']
+          const MESES_ES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic']
+          proximasLibres.push(`• *${DIAS_ES[d.getDay()]} ${d.getDate()} ${MESES_ES[d.getMonth()]}* — ${sl.slice(0,4).join(' | ')}`)
+        }
+      }
       const { date: _, ...rest } = slots
-      return { slots: rest, step: 'BOOKING_ASK_DATE', messages: [new AIMessage(`❌ No hay espacios disponibles para el *${slots.date}*. ¿Deseas otra fecha?`)] }
+      const sugerencias = proximasLibres.length > 0
+        ? `\n\nLas próximas fechas con disponibilidad son:\n${proximasLibres.join('\n')}\n\n¿Te queda bien alguna de esas?`
+        : '\n\n¿Tienes otra fecha en mente?'
+      return {
+        slots: rest, step: 'BOOKING_ASK_DATE',
+        messages: [new AIMessage(`❌ No hay espacios disponibles para el *${slots.date}*.${sugerencias}`)],
+      }
     }
 
     return {
