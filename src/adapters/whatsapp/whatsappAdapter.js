@@ -5,11 +5,32 @@ import qrcode from 'qrcode-terminal'
 import { processMessage } from '../../application/workflowEngine.js'
 import { setWhatsappClient } from '../../application/workflows/BookingWorkflow.js'
 import { logger } from '../../utils/logger.js'
+import fs from 'fs'
+import path from 'path'
 
 const RECONNECT_DELAY_MS = 5000
 
+const clearChromiumLocks = (sessionPath) => {
+  const lockFiles = ['SingletonLock', 'SingletonSocket', 'SingletonCookie']
+  const search = (dir) => {
+    if (!fs.existsSync(dir)) return
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        search(path.join(dir, entry.name))
+      } else if (lockFiles.includes(entry.name)) {
+        const lockPath = path.join(dir, entry.name)
+        fs.rmSync(lockPath, { force: true })
+        logger.info('WhatsApp', `Lock eliminado: ${lockPath}`)
+      }
+    }
+  }
+  search(sessionPath)
+}
+
 export const initWhatsAppAdapter = () => {
   const sessionPath = process.env.SESSION_DATA_PATH || './.wwebjs_auth'
+
+  clearChromiumLocks(sessionPath)
 
   const client = new Client({
     authStrategy: new LocalAuth({ dataPath: sessionPath }),
